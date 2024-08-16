@@ -7,77 +7,19 @@ import json
 import pandas as pd
 from fpdf import FPDF
 import base64
+import traceback
+import os
 
-class GoogleResultParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.results = []
-        self.current_item = {}
-        self.in_title = False
-        self.in_snippet = False
-        self.current_description = []
-        self.debug_info = {"tags_found": []}
+# ... [Previous code for GoogleResultParser and get_google_search_results remains the same] ...
 
-    def handle_starttag(self, tag, attrs):
-        self.debug_info["tags_found"].append((tag, attrs))
-        if tag == "div" and any(attr for attr in attrs if attr[0] == "class" and "g" in attr[1].split()):
-            if self.current_item:
-                self.finalize_current_item()
-            self.current_item = {}
-        elif tag == "a" and not self.current_item.get("link"):
-            for attr in attrs:
-                if attr[0] == "href":
-                    self.current_item["link"] = attr[1]
-                    break
-        elif tag == "h3":
-            self.in_title = True
-        elif tag == "div" and any(attr for attr in attrs if attr[0] == "class" and "VwiC3b" in attr[1].split()):
-            self.in_snippet = True
-
-    def handle_endtag(self, tag):
-        if tag == "h3":
-            self.in_title = False
-        elif tag == "div" and self.in_snippet:
-            self.in_snippet = False
-            self.finalize_current_item()
-
-    def handle_data(self, data):
-        if self.in_title and not self.current_item.get("title"):
-            self.current_item["title"] = data.strip()
-        elif self.in_snippet:
-            self.current_description.append(data.strip())
-
-    def finalize_current_item(self):
-        if self.current_item:
-            self.current_item["description"] = " ".join(self.current_description)
-            if len(self.current_item) == 3:
-                self.results.append(self.current_item)
-            self.current_item = {}
-            self.current_description = []
-
-def get_google_search_results(query: str, num_results: int = 20) -> Dict[str, any]:
-    url = f"https://www.google.com/search?q={query}&num={num_results}"
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+def safe_export(export_func, data, filename):
     try:
-        response = requests.get(url, headers=headers)
-        response.raise_for_status()
-    except requests.RequestException as e:
-        return {"error": f"Request failed: {str(e)}", "results": [], "debug_info": {}}
-    
-    parser = GoogleResultParser()
-    parser.feed(response.text)
-    parser.finalize_current_item()  # Ensure the last item is processed
-    
-    return {
-        "results": parser.results[:num_results],
-        "debug_info": {
-            "status_code": response.status_code,
-            "content_length": len(response.text),
-            "parser_debug": parser.debug_info
-        }
-    }
+        file_path = export_func(data, filename)
+        return file_path, None
+    except Exception as e:
+        error_msg = f"Export failed: {str(e)}\n{traceback.format_exc()}"
+        st.error(error_msg)
+        return None, error_msg
 
 def export_to_json(data: Dict[str, List[Dict[str, str]]], filename: str):
     with open(filename, 'w', encoding='utf-8') as f:
@@ -102,9 +44,9 @@ def export_to_pdf(data: Dict[str, List[Dict[str, str]]], filename: str):
         pdf.cell(0, 10, f"Results for: {query}", ln=1)
         pdf.set_font("Arial", size=12)
         for item in results:
-            pdf.cell(0, 10, txt=item['title'], ln=1)
-            pdf.cell(0, 10, txt=item['link'], ln=1)
-            pdf.multi_cell(0, 10, txt=item['description'])
+            pdf.cell(0, 10, txt=item['title'][:80], ln=1)  # Limit title length
+            pdf.cell(0, 10, txt=item['link'][:80], ln=1)  # Limit URL length
+            pdf.multi_cell(0, 10, txt=item['description'][:200])  # Limit description length
             pdf.cell(0, 10, txt="-"*50, ln=1)
         pdf.add_page()
     
@@ -159,15 +101,19 @@ def main():
             st.subheader("Export Results")
             export_format = st.selectbox("Choose export format:", ["JSON", "Excel", "PDF"])
             if st.button("Export"):
-                if export_format == "JSON":
-                    file_path = export_to_json(all_results, "search_results.json")
-                    st.markdown(get_download_link(file_path, "search_results.json"), unsafe_allow_html=True)
-                elif export_format == "Excel":
-                    file_path = export_to_excel(all_results, "search_results.xlsx")
-                    st.markdown(get_download_link(file_path, "search_results.xlsx"), unsafe_allow_html=True)
-                elif export_format == "PDF":
-                    file_path = export_to_pdf(all_results, "search_results.pdf")
-                    st.markdown(get_download_link(file_path, "search_results.pdf"), unsafe_allow_html=True)
+                with st.spinner("Exporting results..."):
+                    if export_format == "JSON":
+                        file_path, error = safe_export(export_to_json, all_results, "search_results.json")
+                    elif export_format == "Excel":
+                        file_path, error = safe_export(export_to_excel, all_results, "search_results.xlsx")
+                    elif export_format == "PDF":
+                        file_path, error = safe_export(export_to_pdf, all_results, "search_results.pdf")
+                    
+                    if file_path:
+                        st.success(f"Export successful! Click below to download.")
+                        st.markdown(get_download_link(file_path, os.path.basename(file_path)), unsafe_allow_html=True)
+                    elif error:
+                        st.error(f"Export failed. Error: {error}")
 
 if __name__ == "__main__":
     main()
