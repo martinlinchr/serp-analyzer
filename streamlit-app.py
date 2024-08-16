@@ -4,7 +4,7 @@ import json
 import pandas as pd
 
 # SerpAPI key (you should use environment variables for this in production)
-SERPAPI_KEY = "your_serpapi_key_here"
+SERPAPI_KEY = "52d30a8250798e5f882bb4ea284ee1af9fb0cd3d26bc616378cf9825213931a3"
 
 def get_serp_results(query, num_results=20):
     url = "https://serpapi.com/search.json"
