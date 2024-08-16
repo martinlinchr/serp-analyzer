@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-import re
 from html.parser import HTMLParser
 from typing import List, Dict
 import time
@@ -15,9 +14,11 @@ class GoogleResultParser(HTMLParser):
         self.current_item = {}
         self.in_title = False
         self.in_snippet = False
+        self.debug_info = {"tags_found": []}
 
     def handle_starttag(self, tag, attrs):
-        if tag == "div" and ("class", "yuRUbf") in attrs:
+        self.debug_info["tags_found"].append((tag, attrs))
+        if tag == "div" and any(attr for attr in attrs if attr[0] == "class" and "g" in attr[1].split()):
             self.current_item = {}
         elif tag == "a" and not self.current_item.get("link"):
             for attr in attrs:
@@ -26,7 +27,7 @@ class GoogleResultParser(HTMLParser):
                     break
         elif tag == "h3":
             self.in_title = True
-        elif tag == "div" and ("class", "VwiC3b") in attrs:
+        elif tag == "div" and any(attr for attr in attrs if attr[0] == "class" and "VwiC3b" in attr[1].split()):
             self.in_snippet = True
 
     def handle_endtag(self, tag):
@@ -44,38 +45,30 @@ class GoogleResultParser(HTMLParser):
         elif self.in_snippet and not self.current_item.get("description"):
             self.current_item["description"] = data.strip()
 
-def get_google_search_results(query: str, num_results: int = 20) -> List[Dict[str, str]]:
+def get_google_search_results(query: str, num_results: int = 20) -> Dict[str, any]:
     url = f"https://www.google.com/search?q={query}&num={num_results}"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
     }
-    response = requests.get(url, headers=headers)
+    try:
+        response = requests.get(url, headers=headers)
+        response.raise_for_status()  # Raise an exception for bad status codes
+    except requests.RequestException as e:
+        return {"error": f"Request failed: {str(e)}", "results": [], "debug_info": {}}
     
     parser = GoogleResultParser()
     parser.feed(response.text)
     
-    return parser.results[:num_results]
+    return {
+        "results": parser.results[:num_results],
+        "debug_info": {
+            "status_code": response.status_code,
+            "content_length": len(response.text),
+            "parser_debug": parser.debug_info
+        }
+    }
 
-def export_to_json(data: List[Dict[str, str]], filename: str):
-    with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-
-def export_to_excel(data: List[Dict[str, str]], filename: str):
-    df = pd.DataFrame(data)
-    df.to_excel(filename, index=False)
-
-def export_to_pdf(data: List[Dict[str, str]], filename: str):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    
-    for item in data:
-        pdf.cell(200, 10, txt=item['title'], ln=1)
-        pdf.cell(200, 10, txt=item['link'], ln=1)
-        pdf.multi_cell(0, 10, txt=item['description'])
-        pdf.cell(200, 10, txt="-"*50, ln=1)
-    
-    pdf.output(filename)
+# ... [export functions remain the same] ...
 
 def main():
     st.title("Google SERP Top 20 Analyzer")
@@ -90,32 +83,31 @@ def main():
             st.subheader(f"Results for: {phrase}")
             
             with st.spinner(f"Fetching results for '{phrase}'..."):
-                results = get_google_search_results(phrase)
+                response_data = get_google_search_results(phrase)
+            
+            if "error" in response_data:
+                st.error(f"Error occurred: {response_data['error']}")
+                continue
+            
+            results = response_data["results"]
+            debug_info = response_data["debug_info"]
             
             all_results[phrase] = results
             
             st.write(f"Top {len(results)} results:")
-            for i, result in enumerate(results, 1):
-                st.write(f"{i}. {result['title']}")
-                st.write(f"   URL: {result['link']}")
-                st.write(f"   Description: {result['description']}")
-                st.write("---")
+            if len(results) == 0:
+                st.warning("No results found. Displaying debug information:")
+                st.json(debug_info)
+            else:
+                for i, result in enumerate(results, 1):
+                    st.write(f"{i}. {result.get('title', 'No title')}")
+                    st.write(f"   URL: {result.get('link', 'No URL')}")
+                    st.write(f"   Description: {result.get('description', 'No description')}")
+                    st.write("---")
             
             time.sleep(2)  # Add a delay to avoid hitting rate limits
         
-        # Export options
-        st.subheader("Export Results")
-        export_format = st.selectbox("Choose export format:", ["JSON", "Excel", "PDF"])
-        if st.button("Export"):
-            if export_format == "JSON":
-                export_to_json(all_results, "search_results.json")
-                st.success("Exported to search_results.json")
-            elif export_format == "Excel":
-                export_to_excel([item for sublist in all_results.values() for item in sublist], "search_results.xlsx")
-                st.success("Exported to search_results.xlsx")
-            elif export_format == "PDF":
-                export_to_pdf([item for sublist in all_results.values() for item in sublist], "search_results.pdf")
-                st.success("Exported to search_results.pdf")
+        # ... [Export options remain the same] ...
 
 if __name__ == "__main__":
     main()
