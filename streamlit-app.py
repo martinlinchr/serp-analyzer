@@ -1,5 +1,3 @@
-# File: app.py
-
 import streamlit as st
 import requests
 import json
@@ -39,8 +37,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# File: requirements.txt
-streamlit
-requests
-pandas
