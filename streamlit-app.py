@@ -1,71 +1,26 @@
-import streamlit as st
-import requests
-import pandas as pd
-from bs4 import BeautifulSoup
-import nltk
-from nltk.sentiment import SentimentIntensityAnalyzer
-from urllib.parse import urlparse
+# ... [tidligere imports og setup forbliver det samme] ...
 
-# Download NLTK data
-try:
-    nltk.download('vader_lexicon', quiet=True)
-except:
-    pass
+def get_sentiment_emoji(score):
+    """Get emoji based on sentiment score"""
+    if score > 0.05:
+        return "🟢"  # Positiv
+    elif score < -0.05:
+        return "🔴"  # Negativ
+    return "⚫️"  # Neutral
 
-# Dictionary of country codes and their names
-COUNTRIES = {
-    "us": "United States",
-    "dk": "Danmark"
-}
+def count_words(text):
+    """Count words in text"""
+    return len(text.split())
 
-# Dictionary of language codes and their names
-LANGUAGES = {
-    "en": "English",
-    "da": "Dansk"
-}
-
-def get_serp_results(query, num_results=20, country="us", language="en", start=0):
-    """Get SERP results with pagination"""
-    if 'SERPAPI_KEY' not in st.secrets:
-        st.error("SERPAPI_KEY not found in secrets.")
-        st.stop()
+def get_summary(text, word_count=100):
+    """Get summary of approximately word_count words"""
+    words = text.split()
+    if len(words) <= word_count:
+        return text
     
-    url = "https://serpapi.com/search.json"
-    params = {
-        "q": query,
-        "num": 10,  # SerpAPI max per request
-        "start": start,
-        "engine": "google",
-        "api_key": st.secrets.SERPAPI_KEY,
-        "gl": country,
-        "hl": language
-    }
-    
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        return response.json()
-    except Exception as e:
-        st.error(f"Error making request to SERP API: {str(e)}")
-        return None
-
-def get_all_serp_results(query, num_results, country, language):
-    """Get all SERP results using pagination"""
-    all_results = []
-    start = 0
-    
-    while len(all_results) < num_results:
-        results = get_serp_results(query, 10, country, language, start)
-        if not results or "organic_results" not in results:
-            break
-            
-        all_results.extend(results["organic_results"])
-        if len(results["organic_results"]) < 10:
-            break
-            
-        start += 10
-        
-    return {"organic_results": all_results[:num_results]}
+    summary_words = words[:word_count]
+    summary = ' '.join(summary_words) + "..."
+    return summary
 
 def scrape_and_analyze(url):
     """Scrape and analyze content from a URL"""
@@ -86,8 +41,11 @@ def scrape_and_analyze(url):
         sia = SentimentIntensityAnalyzer()
         sentiment = sia.polarity_scores(text)
         
-        # Get summary (first 300 characters)
-        summary = text[:300] + "..." if len(text) > 300 else text
+        # Count words
+        word_count = count_words(text)
+        
+        # Get summary (approximately 100 words)
+        summary = get_summary(text, 100)
         
         return {
             'domain': urlparse(url).netloc,
@@ -95,6 +53,7 @@ def scrape_and_analyze(url):
             'sentiment': sentiment['compound'],
             'sentiment_detailed': sentiment,
             'content_length': len(text),
+            'word_count': word_count,
             'success': True
         }
     except Exception as e:
@@ -104,16 +63,9 @@ def scrape_and_analyze(url):
             'sentiment': 0,
             'sentiment_detailed': {'compound': 0, 'neg': 0, 'neu': 1, 'pos': 0},
             'content_length': 0,
+            'word_count': 0,
             'success': False
         }
-
-def get_sentiment_color(score):
-    """Get color based on sentiment score"""
-    if score > 0.05:
-        return "rgba(0, 255, 0, 0.1)"  # Light green
-    elif score < -0.05:
-        return "rgba(255, 0, 0, 0.1)"  # Light red
-    return "rgba(128, 128, 128, 0.1)"  # Light gray
 
 def main():
     st.title("Google SERP Analyzer with Content Analysis")
@@ -124,34 +76,7 @@ def main():
         ["SERP + Content Analysis", "SERP Only (med mulighed for at vælge URLs til analyse)"]
     )
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        country = st.selectbox(
-            "Select Country",
-            options=list(COUNTRIES.keys()),
-            format_func=lambda x: COUNTRIES[x]
-        )
-    
-    with col2:
-        language = st.selectbox(
-            "Select Language",
-            options=list(LANGUAGES.keys()),
-            format_func=lambda x: LANGUAGES[x]
-        )
-    
-    with col3:
-        num_results = st.number_input(
-            "Number of Results",
-            min_value=1,
-            max_value=100,
-            value=20
-        )
-    
-    search_phrases = st.text_area(
-        "Enter search phrases (one per line):",
-        help="Enter each search phrase on a new line"
-    )
+    # ... [tidligere kode for land/sprog/antal resultater forbliver det samme] ...
     
     if st.button("Analyze"):
         if not search_phrases.strip():
@@ -159,6 +84,10 @@ def main():
             return
             
         phrases = [phrase.strip() for phrase in search_phrases.split("\n") if phrase.strip()]
+        
+        # Store results in session state for later use
+        if 'search_results' not in st.session_state:
+            st.session_state.search_results = {}
         
         for phrase in phrases:
             st.subheader(f"Results for: {phrase}")
@@ -173,6 +102,9 @@ def main():
                 df = pd.DataFrame(results["organic_results"])
                 df["position"] = range(1, len(df) + 1)
                 
+                # Store results in session state
+                st.session_state.search_results[phrase] = df
+                
                 # Display basic results
                 st.dataframe(df[["position", "title", "link", "snippet"]])
                 
@@ -183,16 +115,19 @@ def main():
                     for _, row in df.iterrows():
                         analysis = scrape_and_analyze(row['link'])
                         sentiment_color = get_sentiment_color(analysis['sentiment'])
+                        sentiment_emoji = get_sentiment_emoji(analysis['sentiment'])
                         
-                        with st.expander(
-                            f"#{row['position']} - {row['title']} ({row['link']})", 
-                            expanded=False
-                        ):
+                        expander_label = f"{sentiment_emoji} #{row['position']} - {row['title']} ({row['link']})"
+                        with st.expander(expander_label, expanded=False):
                             st.markdown(
                                 f"""
                                 <div style="padding: 10px; background-color: {sentiment_color}; border-radius: 5px;">
                                     <p><strong>Domain:</strong> {analysis['domain']}</p>
-                                    <p><strong>Content Length:</strong> {analysis['content_length']} characters</p>
+                                    <p><strong>Content Stats:</strong></p>
+                                    <ul>
+                                        <li>Word Count: {analysis['word_count']} words</li>
+                                        <li>Character Count: {analysis['content_length']} characters</li>
+                                    </ul>
                                     <p><strong>Sentiment Scores:</strong></p>
                                     <ul>
                                         <li>Overall: {analysis['sentiment']:.2f}</li>
@@ -209,27 +144,31 @@ def main():
                 else:
                     # Allow selection of URLs to analyze
                     st.subheader("Select URLs to Analyze")
-                    selected_urls = st.multiselect(
+                    options = [f"#{row['position']} - {row['title']}" for idx, row in df.iterrows()]
+                    selected_indices = st.multiselect(
                         "Choose URLs to analyze:",
-                        options=df.index.tolist(),
-                        format_func=lambda x: f"#{df.loc[x, 'position']} - {df.loc[x, 'title']}"
+                        options=range(len(options)),
+                        format_func=lambda x: options[x]
                     )
                     
-                    if st.button("Analyze Selected URLs"):
-                        for idx in selected_urls:
-                            row = df.loc[idx]
+                    if selected_indices and st.button("Analyze Selected URLs"):
+                        for idx in selected_indices:
+                            row = df.iloc[idx]
                             analysis = scrape_and_analyze(row['link'])
                             sentiment_color = get_sentiment_color(analysis['sentiment'])
+                            sentiment_emoji = get_sentiment_emoji(analysis['sentiment'])
                             
-                            with st.expander(
-                                f"#{row['position']} - {row['title']} ({row['link']})", 
-                                expanded=True
-                            ):
+                            expander_label = f"{sentiment_emoji} #{row['position']} - {row['title']} ({row['link']})"
+                            with st.expander(expander_label, expanded=True):
                                 st.markdown(
                                     f"""
                                     <div style="padding: 10px; background-color: {sentiment_color}; border-radius: 5px;">
                                         <p><strong>Domain:</strong> {analysis['domain']}</p>
-                                        <p><strong>Content Length:</strong> {analysis['content_length']} characters</p>
+                                        <p><strong>Content Stats:</strong></p>
+                                        <ul>
+                                            <li>Word Count: {analysis['word_count']} words</li>
+                                            <li>Character Count: {analysis['content_length']} characters</li>
+                                        </ul>
                                         <p><strong>Sentiment Scores:</strong></p>
                                         <ul>
                                             <li>Overall: {analysis['sentiment']:.2f}</li>
