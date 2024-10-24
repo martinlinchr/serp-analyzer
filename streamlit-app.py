@@ -379,3 +379,48 @@ def main():
             "Number of Results",
             min_value=1,
             max_value=100,
+            value=20
+        )
+    
+    search_phrases = st.text_area(
+        "Enter search phrases (one per line):",
+        help="Enter each search phrase on a new line"
+    )
+    
+    if st.button("Analyze"):
+        if not search_phrases.strip():
+            st.warning("Please enter at least one search phrase.")
+            return
+            
+        phrases = [phrase.strip() for phrase in search_phrases.split("\n") if phrase.strip()]
+        
+        for phrase in phrases:
+            st.subheader(f"Results for: {phrase}")
+            results = get_all_serp_results(
+                phrase,
+                num_results=num_results,
+                country=country,
+                language=language
+            )
+            
+            if results and "organic_results" in results:
+                df = pd.DataFrame(results["organic_results"])
+                df["position"] = range(1, len(df) + 1)
+                
+                # Store current results in session state
+                st.session_state.current_df = df
+                
+                # Display basic results
+                st.dataframe(df[["position", "title", "link", "snippet"]])
+                
+                if analysis_mode == "SERP + Content Analysis":
+                    analyze_all_urls(df)
+                else:
+                    analyze_selected_urls(df)
+                
+                st.success(f"Found {len(df)} results for '{phrase}'")
+            else:
+                st.warning(f"No results found or an error occurred for phrase: {phrase}")
+
+if __name__ == "__main__":
+    main()
