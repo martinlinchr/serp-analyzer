@@ -16,33 +16,63 @@ LANGUAGES = {
 }
 
 def get_serp_results(query, num_results=20, country="us", language="en"):
-    # Get API key from Streamlit secrets
+    """
+    Get SERP results with pagination support to fetch the requested number of results
+    """
     if 'SERPAPI_KEY' not in st.secrets:
         st.error("SERPAPI_KEY not found in secrets. Please configure it in your .streamlit/secrets.toml file or Streamlit Cloud dashboard.")
         st.stop()
     
-    url = "https://serpapi.com/search.json"
-    params = {
-        "q": query,
-        "num": num_results,
-        "engine": "google",
-        "api_key": st.secrets.SERPAPI_KEY,
-        "gl": country,  # Location parameter (country)
-        "hl": language  # Language parameter
+    all_results = []
+    remaining_results = num_results
+    start_offset = 0
+    
+    while remaining_results > 0:
+        # Calculate how many results to request in this batch (max 100 per request)
+        batch_size = min(remaining_results, 100)
+        
+        url = "https://serpapi.com/search.json"
+        params = {
+            "q": query,
+            "num": batch_size,
+            "start": start_offset,
+            "engine": "google",
+            "api_key": st.secrets.SERPAPI_KEY,
+            "gl": country,
+            "hl": language
+        }
+        
+        try:
+            with st.spinner(f'Fetching results {start_offset + 1} to {start_offset + batch_size}...'):
+                response = requests.get(url, params=params)
+                response.raise_for_status()
+                
+                results = response.json()
+                
+                if "organic_results" in results:
+                    all_results.extend(results["organic_results"])
+                else:
+                    st.warning(f"No more results available after {len(all_results)} results.")
+                    break
+                
+                # Update counters for next iteration
+                remaining_results -= batch_size
+                start_offset += batch_size
+                
+                # If we got fewer results than requested, we've hit the end
+                if len(results["organic_results"]) < batch_size:
+                    break
+                
+        except requests.exceptions.RequestException as e:
+            st.error(f"Error making request to SERP API: {str(e)}")
+            break
+    
+    # Create final results structure
+    final_results = {
+        "organic_results": all_results[:num_results]  # Ensure we don't return more than requested
     }
     
-    try:
-        response = requests.get(url, params=params)
-        response.raise_for_status()
-        
-        # Debug information
-        if response.status_code != 200:
-            st.error(f"API Response: {response.text}")
-            
-        return response.json()
-    except requests.exceptions.RequestException as e:
-        st.error(f"Error making request to SERP API: {str(e)}")
-        return None
+    return final_results
 
 def main():
     st.title("Google SERP Analyzer")
@@ -104,7 +134,10 @@ def main():
             
             if results and "organic_results" in results:
                 df = pd.DataFrame(results["organic_results"])
+                # Add row numbers that match the actual Google position
+                df['position'] = range(1, len(df) + 1)
                 st.dataframe(df[["position", "title", "link", "snippet"]])
+                st.success(f"Found {len(df)} results for '{phrase}'")
             else:
                 st.warning(f"No results found or an error occurred for phrase: {phrase}")
 
