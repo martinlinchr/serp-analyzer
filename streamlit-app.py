@@ -45,7 +45,7 @@ def get_serp_results(query, num_results=20, country="us", language="en"):
         return None
 
 def main():
-    st.title("Google SERP Top 20 Analyzer")
+    st.title("Google SERP Analyzer")
     
     # Create three columns for the input controls
     col1, col2, col3 = st.columns(3)
