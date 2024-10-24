@@ -10,14 +10,25 @@ from concurrent.futures import ThreadPoolExecutor
 import time
 from requests.exceptions import RequestException
 from urllib.parse import urlparse
+import os
 
-# Download required NLTK data
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('sentiment/vader_lexicon.zip')
-except LookupError:
-    nltk.download('punkt')
-    nltk.download('vader_lexicon')
+# Create a directory for NLTK data if it doesn't exist
+if not os.path.exists("/app/nltk_data"):
+    os.makedirs("/app/nltk_data", exist_ok=True)
+
+# Set NLTK data path
+nltk.data.path.append("/app/nltk_data")
+
+@st.cache_resource
+def download_nltk_data():
+    try:
+        nltk.download('punkt', download_dir="/app/nltk_data")
+        nltk.download('vader_lexicon', download_dir="/app/nltk_data")
+    except Exception as e:
+        st.warning(f"Warning: Could not download NLTK data: {str(e)}")
+
+# Download NLTK data
+download_nltk_data()
 
 # Dictionary of country codes and their names
 COUNTRIES = {
