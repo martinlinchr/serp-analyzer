@@ -6,30 +6,13 @@ import pandas as pd
 # Dictionary of country codes and their names
 COUNTRIES = {
     "us": "United States",
-    "uk": "United Kingdom",
-    "au": "Australia",
-    "ca": "Canada",
-    "de": "Germany",
-    "fr": "France",
-    "es": "Spain",
-    "it": "Italy",
-    "jp": "Japan",
-    "nl": "Netherlands",
-    "br": "Brazil",
-    "in": "India"
+    "da": "Danmark"
 }
 
 # Dictionary of language codes and their names
 LANGUAGES = {
     "en": "English",
-    "es": "Spanish",
-    "fr": "French",
-    "de": "German",
-    "it": "Italian",
-    "pt": "Portuguese",
-    "ja": "Japanese",
-    "nl": "Dutch",
-    "hi": "Hindi"
+    "da": "Dansk"
 }
 
 def get_serp_results(query, num_results=20, country="us", language="en"):
@@ -45,13 +28,17 @@ def get_serp_results(query, num_results=20, country="us", language="en"):
         "engine": "google",
         "api_key": st.secrets.SERPAPI_KEY,
         "gl": country,  # Location parameter (country)
-        "hl": language,  # Language parameter
-        "google_domain": f"google.{country}"  # Google domain for the selected country
+        "hl": language  # Language parameter
     }
     
     try:
         response = requests.get(url, params=params)
         response.raise_for_status()
+        
+        # Debug information
+        if response.status_code != 200:
+            st.error(f"API Response: {response.text}")
+            
         return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"Error making request to SERP API: {str(e)}")
