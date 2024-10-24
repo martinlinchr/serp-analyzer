@@ -6,18 +6,18 @@ import pandas as pd
 # Dictionary of country codes and their names
 COUNTRIES = {
     "us": "United States",
-    "da": "Danmark"
+    "dk": "Danmark"  # Changed from "da" to "dk"
 }
 
 # Dictionary of language codes and their names
 LANGUAGES = {
     "en": "English",
-    "da": "Dansk"
+    "da": "Dansk"  # Language code remains "da" for Danish
 }
 
 def get_serp_results(query, num_results=20, country="us", language="en"):
     """
-    Get SERP results with pagination support to fetch the requested number of results
+    Get SERP results with pagination support and error handling
     """
     if 'SERPAPI_KEY' not in st.secrets:
         st.error("SERPAPI_KEY not found in secrets. Please configure it in your .streamlit/secrets.toml file or Streamlit Cloud dashboard.")
@@ -49,22 +49,29 @@ def get_serp_results(query, num_results=20, country="us", language="en"):
                 
                 results = response.json()
                 
+                # Check if we have the pagination info
+                if "serpapi_pagination" in results:
+                    st.info(f"Page {results['serpapi_pagination'].get('current', 1)} of results")
+                
                 if "organic_results" in results:
                     all_results.extend(results["organic_results"])
+                    
+                    # If we got fewer results than requested, we've hit the end
+                    if len(results["organic_results"]) < batch_size:
+                        st.warning(f"Only {len(all_results)} results available.")
+                        break
+                        
+                    # Update counters for next iteration
+                    remaining_results -= batch_size
+                    start_offset += batch_size
                 else:
                     st.warning(f"No more results available after {len(all_results)} results.")
                     break
                 
-                # Update counters for next iteration
-                remaining_results -= batch_size
-                start_offset += batch_size
-                
-                # If we got fewer results than requested, we've hit the end
-                if len(results["organic_results"]) < batch_size:
-                    break
-                
         except requests.exceptions.RequestException as e:
             st.error(f"Error making request to SERP API: {str(e)}")
+            if hasattr(e.response, 'text'):
+                st.error(f"API Response: {e.response.text}")
             break
     
     # Create final results structure
@@ -73,6 +80,33 @@ def get_serp_results(query, num_results=20, country="us", language="en"):
     }
     
     return final_results
+
+def create_dataframe(results):
+    """
+    Create a DataFrame from results with proper column handling
+    """
+    if not results or "organic_results" not in results:
+        return None
+        
+    df = pd.DataFrame(results["organic_results"])
+    
+    # Define required columns and their default values
+    required_columns = {
+        "position": range(1, len(df) + 1),
+        "title": "",
+        "link": "",
+        "snippet": ""
+    }
+    
+    # Add missing columns with default values
+    for col, default in required_columns.items():
+        if col not in df.columns:
+            if col == "position":
+                df[col] = required_columns["position"]
+            else:
+                df[col] = default
+    
+    return df
 
 def main():
     st.title("Google SERP Analyzer")
@@ -132,10 +166,9 @@ def main():
                 language=language
             )
             
-            if results and "organic_results" in results:
-                df = pd.DataFrame(results["organic_results"])
-                # Add row numbers that match the actual Google position
-                df['position'] = range(1, len(df) + 1)
+            df = create_dataframe(results)
+            
+            if df is not None and not df.empty:
                 st.dataframe(df[["position", "title", "link", "snippet"]])
                 st.success(f"Found {len(df)} results for '{phrase}'")
             else:
