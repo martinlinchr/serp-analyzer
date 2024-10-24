@@ -7,6 +7,16 @@ from nltk.sentiment import SentimentIntensityAnalyzer
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
+NEGATIVE_KEYWORDS = {
+    "en": ["error", "mistake", "failure", "bad", "wrong", "poorly", "negative", "unfortunately", "problem", "issue"],
+    "da": ["fejl", "dårlig", "forkert", "desværre", "problem", "negativt", "ikke god", "kritisk", "utilfreds", "mangel"]
+}
+
+POSITIVE_KEYWORDS = {
+    "en": ["success", "excellent", "good", "best", "positive", "perfect", "recommend", "great", "innovative", "impressive"],
+    "da": ["succes", "fremragende", "god", "bedste", "positiv", "perfekt", "anbefale", "fantastisk", "innovativ", "imponerende"]
+}
+
 # Download NLTK data
 @st.cache_resource
 def initialize_nltk():
@@ -27,6 +37,69 @@ LANGUAGES = {
     "en": "English",
     "da": "Dansk"
 }
+
+class ContentAnalyzer:
+    def __init__(self, language="en"):
+        self.language = language
+        self.sia = SentimentIntensityAnalyzer()
+        
+    def count_keywords(self, text, keyword_list):
+        """Count occurrences of keywords in text"""
+        text = text.lower()
+        count = sum(text.count(keyword.lower()) for keyword in keyword_list)
+        return count
+    
+    def analyze_text_quality(self, text):
+        """Analyze text quality based on various metrics"""
+        # Beregn gennemsnitlig sætningslængde
+        sentences = text.split('.')
+        avg_sentence_length = sum(len(s.split()) for s in sentences) / len(sentences) if sentences else 0
+        
+        # Tjek for meget korte eller meget lange sætninger
+        sentence_length_score = 1.0
+        if avg_sentence_length < 5:
+            sentence_length_score = 0.5
+        elif avg_sentence_length > 40:
+            sentence_length_score = 0.7
+            
+        return {
+            'avg_sentence_length': avg_sentence_length,
+            'sentence_length_score': sentence_length_score
+        }
+    
+    def analyze_content(self, text):
+        """Perform comprehensive content analysis"""
+        # Basic sentiment
+        sentiment = self.sia.polarity_scores(text)
+        
+        # Keyword analysis
+        negative_count = self.count_keywords(text, NEGATIVE_KEYWORDS[self.language])
+        positive_count = self.count_keywords(text, POSITIVE_KEYWORDS[self.language])
+        
+        # Text quality
+        quality_metrics = self.analyze_text_quality(text)
+        
+        # Calculate weighted score
+        total_words = len(text.split())
+        keyword_ratio = (positive_count - negative_count) / total_words if total_words > 0 else 0
+        
+        # Combine scores
+        combined_score = (
+            sentiment['compound'] * 0.4 +  # VADER sentiment
+            keyword_ratio * 0.4 +          # Keyword analysis
+            quality_metrics['sentence_length_score'] * 0.2  # Text quality
+        )
+        
+        return {
+            'sentiment': sentiment,
+            'keyword_analysis': {
+                'positive_count': positive_count,
+                'negative_count': negative_count,
+                'keyword_ratio': keyword_ratio
+            },
+            'text_quality': quality_metrics,
+            'combined_score': combined_score
+        }
 
 # Utility functions
 def get_sentiment_color(score):
@@ -105,7 +178,7 @@ def get_summary(text, word_count=100):
     summary = ' '.join(summary_words) + "..."
     return summary
 
-def scrape_and_analyze(url):
+def scrape_and_analyze(url, language="en"):
     """Scrape and analyze content from a URL"""
     try:
         headers = {
@@ -126,12 +199,9 @@ def scrape_and_analyze(url):
         text = ' '.join(p.get_text().strip() for p in paragraphs)
         text = ' '.join(text.split())
         
-        # Get sentiment
-        sia = SentimentIntensityAnalyzer()
-        sentiment = sia.polarity_scores(text)
-        
-        # Count words
-        word_count = count_words(text)
+        # Analyze content
+        analyzer = ContentAnalyzer(language)
+        analysis_result = analyzer.analyze_content(text)
         
         # Get summary
         summary = get_summary(text, 100)
@@ -139,10 +209,13 @@ def scrape_and_analyze(url):
         return {
             'domain': urlparse(url).netloc,
             'summary': summary,
-            'sentiment': sentiment['compound'],
-            'sentiment_detailed': sentiment,
+            'sentiment': analysis_result['sentiment']['compound'],
+            'sentiment_detailed': analysis_result['sentiment'],
+            'keyword_analysis': analysis_result['keyword_analysis'],
+            'text_quality': analysis_result['text_quality'],
+            'combined_score': analysis_result['combined_score'],
             'content_length': len(text),
-            'word_count': word_count,
+            'word_count': count_words(text),
             'success': True
         }
     except Exception as e:
@@ -151,16 +224,28 @@ def scrape_and_analyze(url):
             'summary': f"Error: {str(e)}",
             'sentiment': 0,
             'sentiment_detailed': {'compound': 0, 'neg': 0, 'neu': 1, 'pos': 0},
+            'keyword_analysis': {'positive_count': 0, 'negative_count': 0, 'keyword_ratio': 0},
+            'text_quality': {'avg_sentence_length': 0, 'sentence_length_score': 0},
+            'combined_score': 0,
             'content_length': 0,
             'word_count': 0,
             'success': False
         }
 
-def display_analysis_results(row):
+def display_analysis_results(row, language="en"):
     """Display analysis results for a single URL"""
-    analysis = scrape_and_analyze(row['link'])
-    sentiment_color = get_sentiment_color(analysis['sentiment'])
-    sentiment_emoji = get_sentiment_emoji(analysis['sentiment'])
+    if 'analysis_results' not in st.session_state:
+        st.session_state.analysis_results = {}
+    
+    # Check if we already have analysis for this URL
+    if row['link'] in st.session_state.analysis_results:
+        analysis = st.session_state.analysis_results[row['link']]
+    else:
+        analysis = scrape_and_analyze(row['link'], language)
+        st.session_state.analysis_results[row['link']] = analysis
+    
+    sentiment_color = get_sentiment_color(analysis['combined_score'])
+    sentiment_emoji = get_sentiment_emoji(analysis['combined_score'])
     
     expander_label = f"{sentiment_emoji} #{row['position']} - {row['title']} ({row['link']})"
     with st.expander(expander_label, expanded=False):
@@ -172,10 +257,18 @@ def display_analysis_results(row):
                 <ul>
                     <li>Word Count: {analysis['word_count']} words</li>
                     <li>Character Count: {analysis['content_length']} characters</li>
+                    <li>Average Sentence Length: {analysis['text_quality']['avg_sentence_length']:.1f} words</li>
                 </ul>
-                <p><strong>Sentiment Scores:</strong></p>
+                <p><strong>Content Analysis:</strong></p>
                 <ul>
-                    <li>Overall: {analysis['sentiment']:.2f}</li>
+                    <li>Combined Score: {analysis['combined_score']:.2f}</li>
+                    <li>VADER Sentiment: {analysis['sentiment']:.2f}</li>
+                    <li>Positive Keywords: {analysis['keyword_analysis']['positive_count']}</li>
+                    <li>Negative Keywords: {analysis['keyword_analysis']['negative_count']}</li>
+                    <li>Keyword Ratio: {analysis['keyword_analysis']['keyword_ratio']:.2f}</li>
+                </ul>
+                <p><strong>Detailed Sentiment:</strong></p>
+                <ul>
                     <li>Positive: {analysis['sentiment_detailed']['pos']:.2f}</li>
                     <li>Neutral: {analysis['sentiment_detailed']['neu']:.2f}</li>
                     <li>Negative: {analysis['sentiment_detailed']['neg']:.2f}</li>
