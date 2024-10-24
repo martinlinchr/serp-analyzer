@@ -1,5 +1,5 @@
-streamlit
-requests
-pandas
-openpyxl
-fpdf
+beautifulsoup4==4.12.2
+nltk==3.8.1
+requests==2.31.0
+pandas==2.1.0
+streamlit==1.29.0
